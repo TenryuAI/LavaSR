@@ -1,0 +1,9 @@
+{
+  "mode": "split",
+  "cutoff_hz": 7500,
+  "sample_rate": 48000,
+  "transition_bins": 1024,
+  "n_fft": 2048,
+  "hop_length": 512,
+  "win_length": 2048
+}

@@ -1,0 +1,7 @@
+{
+  "n_fft": 512,
+  "hop_length": 256,
+  "win_length": 512,
+  "sample_rate": 16000,
+  "n_bins": 257
+}
