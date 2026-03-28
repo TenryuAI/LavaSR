@@ -20,10 +20,9 @@ class LavaEnhance:
         self.denoiser_model = LavaDenoiser(f'{model_path}/denoiser/denoiser.bin', device=device) ## based on UL-UNAS
         
 
-    def enhance(self, wav, enhance=True, denoise=True, batch=False):
+    def _enhance_mono(self, wav, enhance=True, denoise=True, batch=False):
+        """Enhance one channel; wav shape (1, T) at 16 kHz. Returns 1D tensor."""
         pad_size = 0
-        low_quality_audio = wav
-
         if batch:
             wav, pad_size = wav_to_1s_batches(wav, 16000)
 
@@ -33,7 +32,7 @@ class LavaEnhance:
                 wav = torchaudio.functional.resample(wav, 16000, 48000)
         else:
             wav = torchaudio.functional.resample(wav, 16000, 48000)
-    
+
         if enhance:
             with torch.no_grad():
                 wav = self.bwe_model.infer(wav).reshape(-1)
@@ -42,11 +41,28 @@ class LavaEnhance:
 
         return wav
 
+    def enhance(self, wav, enhance=True, denoise=True, batch=False):
+        if wav.dim() == 1:
+            wav = wav.unsqueeze(0)
+        num_ch = wav.shape[0]
+        if num_ch > 2:
+            raise ValueError("Only mono and stereo are supported.")
+
+        outs = []
+        for c in range(num_ch):
+            outs.append(self._enhance_mono(wav[c : c + 1], enhance, denoise, batch))
+
+        if num_ch == 1:
+            return outs[0]
+        return torch.stack(outs, dim=0)
+
     def load_audio(self, file_path, input_sr=16000, duration=10000, cutoff=None):
         x = load_wav(file_path, resample_to=input_sr, duration=duration).to(self.device)
         
-        if cutoff == None:
-            cutoff = input_sr//2
+        if cutoff is None:
+            # Slightly below Nyquist (e.g. 7.5 kHz @ 16 kHz) so FastLRMerge hands off
+            # earlier and reduces a spectral notch at the original band edge.
+            cutoff = max(input_sr // 2 - 500, 500)
           
         self.bwe_model.lr_refiner = FastLRMerge(device=self.device, cutoff=cutoff, transition_bins=1024)
       

@@ -1,0 +1,4 @@
+torch
+librosa
+soundfile
+vocos @ git+https://github.com/langtech-bsc/vocos.git@matcha
