@@ -114,6 +114,7 @@ sf.write('output.wav', output_audio, 48000)
 - [GUI App](https://github.com/faxlab/LavaSR-Fast-Enhancer): GUI app for LavaSR.
 - [C++ implementation](https://github.com/Topping1/LavaSRcpp): Purely C++ implementation for LavaSR.
 - [Onnx implementation](https://github.com/Topping1/LavaSR-ONNX): Clean and simple Onnx implementation for LavaSR(
+- [ONNX Embedded](https://github.com/idocinthebox/LavaSR-ONNX-Embedded): ONNX runtime with weights embedded in graph, DirectML/NPU support, and export script.
 
 Thanks to the community for building on top of the model!
 
