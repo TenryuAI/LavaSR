@@ -16,8 +16,8 @@ class LavaEnhance:
             model_path = snapshot_download(model_path)
 
         self.device = device
-        self.bwe_model = LavaBWE(f"{model_path}/enhancer", device=device) ## proposed work
-        self.denoiser_model = LavaDenoiser(f'{model_path}/denoiser/denoiser.bin', device=device) ## based on UL-UNAS
+        self.bwe_model = LavaBWE(f"{model_path}/enhancer_v2", device=device)
+        self.denoiser_model = LavaDenoiser(f'{model_path}/denoiser/denoiser.bin', device=device)
         
 
     def _enhance_mono(self, wav, enhance=True, denoise=True, batch=False):
@@ -68,13 +68,17 @@ class LavaEnhance:
       
         return x, input_sr
 
-class LavaEnhance2(LavaEnhance):
+class LavaEnhanceV1(LavaEnhance):
+    """Legacy v1 BWE weights (enhancer/). Prefer LavaEnhance / LavaEnhance2."""
+
     def __init__(self, model_path="YatharthS/LavaSR", device='cpu'):
-
         if model_path == "YatharthS/LavaSR":
-            from huggingface_hub import snapshot_download
             model_path = snapshot_download(model_path)
-
         self.device = device
-        self.bwe_model = LavaBWE(f"{model_path}/enhancer_v2", device=device) 
+        self.bwe_model = LavaBWE(f"{model_path}/enhancer", device=device)
         self.denoiser_model = LavaDenoiser(f'{model_path}/denoiser/denoiser.bin', device=device)
+
+
+class LavaEnhance2(LavaEnhance):
+    """Alias for LavaEnhance (v2 is the default since LavaSR v2 release)."""
+    pass

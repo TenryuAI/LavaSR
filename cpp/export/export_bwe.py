@@ -173,20 +173,11 @@ def export(model_dir: str, output_dir: str, cutoff_hz: int = 7500,
         print(f"[BWE] Mode A failed ({exc}), trying Mode B (split)…")
         mode = "split"
         model_b = BWESplit(bwe).eval()
-        try:
-            torch.onnx.export(
-                model_b, (dummy,), onnx_path,
-                input_names=["wav_48k"],
-                output_names=["raw_head_out"],
-                dynamic_axes={"wav_48k": {1: "T"}, "raw_head_out": {2: "T_frames"}},
-                opset_version=17,
-                do_constant_folding=True,
-                verbose=False,
-                dynamo=False,
-            )
-        except TypeError:
-            torch.onnx.export(
-                model_b, (dummy,), onnx_path,
+        mode_b_ok = False
+        last_exc = None
+        # v2 MelSpectrogram needs dynamo export; v1 may need legacy trace (dynamo=False).
+        for use_dynamo in (True, False):
+            export_kwargs = dict(
                 input_names=["wav_48k"],
                 output_names=["raw_head_out"],
                 dynamic_axes={"wav_48k": {1: "T"}, "raw_head_out": {2: "T_frames"}},
@@ -194,7 +185,29 @@ def export(model_dir: str, output_dir: str, cutoff_hz: int = 7500,
                 do_constant_folding=True,
                 verbose=False,
             )
-        print(f"[BWE] Mode B (split) export OK → {onnx_path}")
+            if not use_dynamo:
+                export_kwargs["dynamo"] = False
+            try:
+                torch.onnx.export(model_b, (dummy,), onnx_path, **export_kwargs)
+                print(f"[BWE] Mode B (split, dynamo={use_dynamo}) export OK → {onnx_path}")
+                mode_b_ok = True
+                break
+            except TypeError as exc:
+                # dynamo= kwarg not available in older PyTorch – retry without it
+                last_exc = exc
+                try:
+                    export_kwargs.pop("dynamo", None)
+                    torch.onnx.export(model_b, (dummy,), onnx_path, **export_kwargs)
+                    print(f"[BWE] Mode B (split, legacy API) export OK → {onnx_path}")
+                    mode_b_ok = True
+                    break
+                except Exception as exc2:
+                    last_exc = exc2
+            except Exception as exc:
+                print(f"[BWE] Mode B dynamo={use_dynamo} failed: {exc}")
+                last_exc = exc
+        if not mode_b_ok:
+            raise RuntimeError(f"Mode B export failed: {last_exc}") from last_exc
 
     # ---- Write config -----------------------------------------------------
     config = {

@@ -57,6 +57,19 @@ private:
 } // namespace lavasr
 
 // ===========================================================================
+// DLL export/import macro
+// ===========================================================================
+#ifdef _WIN32
+  #ifdef LAVASR_BUILDING_DLL
+    #define LAVASR_API __declspec(dllexport)
+  #else
+    #define LAVASR_API __declspec(dllimport)
+  #endif
+#else
+  #define LAVASR_API __attribute__((visibility("default")))
+#endif
+
+// ===========================================================================
 // C interface  (extern "C" so it can be called from Swift, Kotlin JNI, etc.)
 // ===========================================================================
 #ifdef __cplusplus
@@ -72,32 +85,22 @@ typedef void* LavaSRHandle;
 /// @param cutoff_hz       FastLRMerge cutoff (Hz); pass 0 to use default (7500).
 /// @param denoise         Non-zero to enable denoiser.
 /// @return                Opaque handle, or NULL on failure.
-LavaSRHandle lavasr_create(const char* bwe_onnx,
-                           const char* denoiser_onnx,
-                           int cutoff_hz,
-                           int denoise);
+LAVASR_API LavaSRHandle lavasr_create(const char* bwe_onnx,
+                                      const char* denoiser_onnx,
+                                      int cutoff_hz,
+                                      int denoise);
 
 /// Enhance audio.
-///
-/// @param handle       Handle returned by lavasr_create().
-/// @param in_samples   Interleaved float32 PCM at in_sr.
-/// @param in_frames    Number of frames (total samples = in_frames * n_channels).
-/// @param in_sr        Input sample rate.
-/// @param n_channels   1 or 2.
-/// @param denoise      Override denoise flag (0 = off, 1 = on, -1 = use handle setting).
-/// @param out_samples  [out] Caller receives a heap-allocated buffer; free with lavasr_free_buffer().
-/// @param out_frames   [out] Number of frames in out_samples (at 48 kHz).
-/// @return             0 on success, negative on error.
-int lavasr_enhance(LavaSRHandle handle,
-                   const float* in_samples, int in_frames,
-                   int in_sr, int n_channels, int denoise,
-                   float** out_samples, int* out_frames);
+LAVASR_API int lavasr_enhance(LavaSRHandle handle,
+                              const float* in_samples, int in_frames,
+                              int in_sr, int n_channels, int denoise,
+                              float** out_samples, int* out_frames);
 
 /// Destroy a LavaSR instance created by lavasr_create().
-void lavasr_free(LavaSRHandle handle);
+LAVASR_API void lavasr_free(LavaSRHandle handle);
 
 /// Free a buffer returned by lavasr_enhance().
-void lavasr_free_buffer(float* buf);
+LAVASR_API void lavasr_free_buffer(float* buf);
 
 #ifdef __cplusplus
 } // extern "C"

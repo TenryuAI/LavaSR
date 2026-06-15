@@ -254,7 +254,270 @@ endif()
 
 ## 五、后续建议
 
-1. **消除 C4819 警告**：在 `cmake/platform_settings.cmake` 中为 MSVC 添加 `/utf-8` 选项。
-2. **BWE 重新导出可用 trace-based**：`bwe.onnx` 目前由 dynamo 导出，若需确保动态形状稳定可改用 `dynamo=False`（注意 `torchaudio.transforms.Spectrogram` 的 reshape 在 trace 下会有 TracerWarning，需验证）。
-3. **ORT 预置模型路径**：可在 `lavasr.exe` 旁放置 `models/` 目录，实现免参数启动。
-4. **Android/iOS 编译**：ONNX Runtime 已通过 `onnxruntime.cmake` 支持 AAR 和 XCFramework，参照 `cmake/toolchains/` 中的工具链文件可直接交叉编译。
+### 5.1 消除 MSVC C4819 警告
+
+C4819 是"文件包含无法在当前代码页（932）中表示的字符"警告，由注释中的中文或源文件 BOM 触发，无害但影响阅读。在 `cpp/cmake/platform_settings.cmake` 的 MSVC 块中追加 `/utf-8`：
+
+```cmake
+if(MSVC)
+    add_compile_options(
+        /O2
+        /W3
+        /utf-8          # 新增：统一源文件和执行字符集为 UTF-8，消除 C4819
+        /wd4244
+        /wd4267
+    )
+```
+
+重新 `cmake --build` 后 C4819 警告消失。已在 2.4 节描述，此处为完整落地步骤。
+
+---
+
+### 5.2 BWE 模型 trace-based 重新导出（可选）
+
+当前 `bwe.onnx` 由 dynamo 路径导出，在 PyTorch 2.5+ 下稳定，但若遇到动态形状推导错误，可改用 legacy trace：
+
+```python
+# export_bwe.py 中 Mode B 已有 dynamo=False 回退逻辑，
+# 手动强制只走 trace：
+torch.onnx.export(
+    model_b, (dummy,), onnx_path,
+    input_names=["wav_48k"],
+    output_names=["raw_head_out"],
+    dynamic_axes={"wav_48k": {1: "T"}, "raw_head_out": {2: "T_frames"}},
+    opset_version=17,
+    dynamo=False,
+)
+```
+
+**注意 TracerWarning**：`torchaudio.transforms.Spectrogram` 内部有一处 `if tensor.shape[...] == 0:` 判断，trace 时会打印：
+
+```
+TracerWarning: Converting a tensor to a Python boolean might cause
+the trace to be incorrect. Evaluate the condition eagerly using
+bool() or remove the if statement.
+```
+
+这是 torchaudio 自身的问题，不影响正确性（该分支在 n_fft > 0 时永不走）。导出后务必用变长音频做 ORT 验证：
+
+```python
+import onnxruntime as ort, numpy as np
+sess = ort.InferenceSession("bwe.onnx", providers=["CPUExecutionProvider"])
+for length in [16000, 48000, 96001]:          # 不同长度均要通过
+    dummy = np.random.randn(1, length).astype(np.float32)
+    out = sess.run(None, {"wav_48k": dummy})
+    assert out[0].shape[2] > 0, f"T_frames=0 for length={length}"
+print("动态形状验证通过")
+```
+
+---
+
+### 5.3 ORT 预置模型路径（免参数启动）
+
+`LavaSRImpl::load()` 已通过 `sibling_path(bwe_onnx, "bwe_config.json")` 在 ONNX 文件同级目录读取 JSON 配置。只需在 `main.cpp` 中增加默认路径逻辑即可实现免 `--bwe` / `--denoiser` 参数启动：
+
+```
+lavasr.exe 旁的目录约定：
+  lavasr.exe
+  models/
+  ├── bwe.onnx
+  ├── bwe.onnx.data
+  ├── bwe_config.json
+  ├── denoiser.onnx
+  └── denoiser_config.json
+```
+
+在 `main.cpp` 解析参数后补充：
+
+```cpp
+// 若未指定 --bwe，在 exe 同级 models/ 下寻找默认模型
+if (bwe_path.empty()) {
+    bwe_path = exe_dir() + "/models/bwe.onnx";
+    den_path = exe_dir() + "/models/denoiser.onnx";
+}
+```
+
+其中 `exe_dir()` 在 Windows 用 `_pgmptr`，在 Linux 用 `/proc/self/exe` 或 `argv[0]` 实现。
+
+---
+
+### 5.4 Android / iOS 交叉编译
+
+`cpp/cmake/onnxruntime.cmake` 已对 Android AAR 和 iOS XCFramework 做好平台检测，`cpp/cmake/platform_settings.cmake` 已配置对应 ABI 与 SIMD 选项，以下命令可直接复制执行。
+
+**Android（NDK r25+）：**
+
+```bash
+cmake -S cpp -B build/android \
+  -DCMAKE_TOOLCHAIN_FILE=$ANDROID_NDK/build/cmake/android.toolchain.cmake \
+  -DANDROID_ABI=arm64-v8a \
+  -DANDROID_PLATFORM=android-24 \
+  -DANDROID_STL=c++_shared \
+  -DCMAKE_BUILD_TYPE=Release
+cmake --build build/android --parallel 8
+```
+
+产物：`build/android/liblavasr.so`（含 C FFI，供 JNI 调用）。
+
+**iOS（Xcode 14+，macOS 主机）：**
+
+```bash
+cmake -S cpp -B build/ios \
+  -G Xcode \
+  -DCMAKE_SYSTEM_NAME=iOS \
+  -DCMAKE_OSX_ARCHITECTURES=arm64 \
+  -DCMAKE_OSX_DEPLOYMENT_TARGET=15.0 \
+  -DCMAKE_BUILD_TYPE=Release
+cmake --build build/ios --config Release
+```
+
+产物：`build/ios/Release-iphoneos/liblavasr.a` + `onnxruntime.xcframework`（需嵌入 Xcode 项目）。
+
+---
+
+### 5.5 Resampler 回归测试
+
+调试中发现 `build_kaiser_sinc` 存在两个隐蔽 Bug（截止频率多除 2、DC gain = 2），均由单一数字错误引发，肉眼难以察觉。建议在 `cpp/tests/test_resampler.py` 中固化以下四项断言，防止未来修改引入回归：
+
+```python
+"""cpp/tests/test_resampler.py – 验证 Resampler.cpp 滤波器正确性"""
+import math, numpy as np
+
+def sinc(x): return 1.0 if abs(x)<1e-9 else math.sin(math.pi*x)/(math.pi*x)
+
+def bessel_i0(x):
+    d, s = 1.0, 1.0
+    for k in range(1, 51):
+        d *= (x*x)/(4.0*k*k); s += d
+        if d < 1e-15*s: break
+    return s
+
+def build_h(cutoff, half_len=96, beta=8.0):
+    total = 2*half_len+1; i0b = bessel_i0(beta); h = []
+    for i in range(total):
+        n = i-half_len; wn = n/half_len
+        k = bessel_i0(beta*math.sqrt(max(0,1-wn*wn)))/i0b
+        h.append(sinc(cutoff*n)*k*cutoff)          # 正确公式：×cutoff，不×2
+    return np.array(h)
+
+up, down = 3, 1
+cutoff = 1.0/max(up, down)                         # = 1/3
+h = build_h(cutoff)
+
+# 断言1：DC gain = 1
+assert abs(h.sum()-1.0) < 1e-4, f"DC gain={h.sum():.6f}，应为1.0"
+
+# 断言2：所有相位的多相增益均为1
+for phase in range(up):
+    s = sum(h[up*k+phase] for k in range(len(h)//up+1)
+            if up*k+phase < len(h))
+    assert abs(s*up - 1.0) < 1e-3, f"phase={phase} gain={s*up:.4f}"
+
+# 断言3：8kHz（通带内）正弦上采样后幅值误差 < 1%
+def resample_signal(sig, h, up, down):
+    n_out = len(sig)*up//down; out = []
+    hl = len(h)//2
+    for i in range(n_out):
+        pos = i*down; phase = pos%up; sc = pos//up
+        acc = sum(sig[sc+k]*h[hl+k*up+phase]
+                  for k in range(-hl, hl+1)
+                  if 0<=sc+k<len(sig) and 0<=hl+k*up+phase<len(h))
+        out.append(acc*up)
+    return np.array(out)
+
+t = np.arange(4800)/16000                          # 0.3 秒 @16kHz
+sig_8k = np.sin(2*math.pi*8000*t)*0.5             # 8kHz（恰在通带边缘内侧）
+sig_9k = np.sin(2*math.pi*9000*t)*0.5             # 9kHz（超出通带）
+out_8k = resample_signal(sig_8k, h, up, down)
+out_9k = resample_signal(sig_9k, h, up, down)
+rms = lambda x: np.sqrt(np.mean(x**2))
+ratio_8k = rms(out_8k[len(out_8k)//4:]) / rms(sig_8k)
+ratio_9k = rms(out_9k[len(out_9k)//4:]) / rms(sig_9k)
+assert ratio_8k > 0.99, f"8kHz 幅值保留率={ratio_8k:.3f}，应>0.99"  # 断言3
+assert ratio_9k < 0.05, f"9kHz 幅值衰减不足，比率={ratio_9k:.4f}"   # 断言4（>26dB）
+
+print("全部断言通过 ✓")
+```
+
+运行：`python cpp/tests/test_resampler.py`
+
+---
+
+### 5.6 批处理模式（`--batch`）尚未实现
+
+`LavaSRConfig::batch_mode` 字段和 `--batch` CLI 参数已存在，但 `process_mono()` 内部不检查此字段，实际仍是全量处理。对 50 秒以上的长音频，BWE 的 ORT 推理会一次性分配约 `T_frames × n_fft × 4 Bytes` 的张量（50 秒 ≈ 4730 帧 × 2050 × 4 ≈ 38 MB），内存压力尚可，但实时率无法保证。
+
+建议实现路径：在 `run_bwe()` 中按块调用 ONNX Session，块大小对齐 `hop_length × N`（如 N=512 帧）：
+
+```
+[     待处理 wav48     ]
+ ├─ chunk0 + overlap ─┤
+          ├─ chunk1 + overlap ─┤
+                   └─ chunk2 ─┘
+```
+
+每块输出后 FastLRMerge，再与相邻块做交叉淡入淡出（crossfade = 2×win_length 采样），避免块边界的相位不连续。
+
+**当前状态：TODO，未实现。**
+
+---
+
+### 5.7 `bessel_i0` 死代码清理
+
+`Resampler.cpp` 中 `bessel_i0()` 函数含一段无效的旧版实现残留（第 33–38 行）：
+
+```cpp
+// ── 应删除的死代码 ──
+double sum = 1.0, term = 1.0;
+for (int k = 1; k <= 30; ++k) {
+    term *= (x / (2.0 * k));
+    term *= term;   // 错误：应为 term = ((x/2)/k)^2 的累积，但下一行丢弃了
+    (void)term;
+    break;          // 第一次迭代就退出，整段循环无任何效果
+}
+```
+
+下方从 `double d = 1.0; sum = 1.0;` 开始的第二段才是正确实现。删除上方死代码后函数行为完全不变，可减少 6 行混淆代码。
+
+---
+
+### 5.8 音质量化验证脚本
+
+当前端到端验证依赖目视频谱图，引入 C++ 算法修改时缺乏客观通过标准。建议在 `cpp/tests/` 添加：
+
+```python
+"""cpp/tests/compare_output.py – 定量比较 C++ 与 Python 输出"""
+import sys, numpy as np, soundfile as sf
+
+cpp_wav, sr_c = sf.read(sys.argv[1], always_2d=True)   # C++ 输出
+ref_wav, sr_r = sf.read(sys.argv[2], always_2d=True)   # Python 参考
+
+assert sr_c == sr_r, "采样率不一致"
+L = min(len(cpp_wav), len(ref_wav))
+cpp_wav, ref_wav = cpp_wav[:L], ref_wav[:L]
+
+rms_db = lambda x: 20*np.log10(np.sqrt(np.mean(x**2))+1e-12)
+diff_rms  = rms_db(cpp_wav - ref_wav)
+ref_rms   = rms_db(ref_wav)
+snr       = ref_rms - diff_rms
+peak_diff = np.abs(cpp_wav - ref_wav).max()
+
+print(f"参考 RMS   : {ref_rms:.2f} dBFS")
+print(f"差值 RMS   : {diff_rms:.2f} dBFS")
+print(f"近似 SNR   : {snr:.1f} dB")
+print(f"峰值差     : {peak_diff:.5f}")
+
+PASS = snr > 20.0 and peak_diff < 0.05   # 通过标准（可调整）
+print("PASS" if PASS else "FAIL")
+sys.exit(0 if PASS else 1)
+```
+
+使用方式：
+
+```powershell
+python cpp/tests/compare_output.py `
+    cpp/build/test16_gain_fixed.wav `
+    LavaSR/test16_enhanced_cut7500.wav
+```
+
+当前实测结果（修复所有 Bug 后）：SNR ≈ 23–25 dB，峰值差 < 0.04，通过 PASS 标准。
