@@ -1,0 +1,11 @@
+# CMake / MSVC build outputs
+cpp/build/
+
+# Editor
+*.code-workspace
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
