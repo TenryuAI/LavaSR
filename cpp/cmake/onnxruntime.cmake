@@ -15,7 +15,7 @@
 #   • Android   arm64-v8a / x86_64
 # ---------------------------------------------------------------------------
 
-set(ORT_VERSION "1.20.1" CACHE STRING "ONNX Runtime version")
+set(ORT_VERSION "1.22.0" CACHE STRING "ONNX Runtime version")
 set(ORT_BASE_URL "https://github.com/microsoft/onnxruntime/releases/download/v${ORT_VERSION}")
 
 include(FetchContent)

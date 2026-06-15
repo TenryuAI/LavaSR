@@ -386,12 +386,12 @@ FetchContent_Declare(nlohmann_json URL "...json.hpp")
 
 | 平台 | CMake 生成器 / 工具链 | ORT 包名 |
 |------|----------------------|----------|
-| Windows x64 | `Visual Studio 17` `-A x64` | `onnxruntime-win-x64-1.20.1.zip` |
-| Windows ARM64 | `Visual Studio 17` `-A ARM64` | `onnxruntime-win-arm64-1.20.1.zip` |
-| Linux x64 | 系统 GCC/Clang | `onnxruntime-linux-x64-1.20.1.tgz` |
-| Linux aarch64 | `toolchains/linux_aarch64.cmake` | `onnxruntime-linux-aarch64-1.20.1.tgz` |
-| Android arm64 | NDK toolchain | `onnxruntime-android-1.20.1.aar` |
-| iOS arm64 | `toolchains/ios.cmake` + Xcode | `onnxruntime-ios-xcframework-1.20.1.zip` |
+| Windows x64 | `Visual Studio 17` `-A x64` | `onnxruntime-win-x64-1.22.0.zip` |
+| Windows ARM64 | `Visual Studio 17` `-A ARM64` | `onnxruntime-win-arm64-1.22.0.zip` |
+| Linux x64 | 系统 GCC/Clang | `onnxruntime-linux-x64-1.22.0.tgz` |
+| Linux aarch64 | `toolchains/linux_aarch64.cmake` | `onnxruntime-linux-aarch64-1.22.0.tgz` |
+| Android arm64 | NDK toolchain | `onnxruntime-android-1.22.0.aar` |
+| iOS arm64 | `toolchains/ios.cmake` + Xcode | `onnxruntime-ios-xcframework-1.22.0.zip` |
 
 ### 编译选项
 
@@ -399,7 +399,7 @@ FetchContent_Declare(nlohmann_json URL "...json.hpp")
 |------|------|------|
 | `BUILD_CLI` | `ON` | 编译 `lavasr` 命令行工具 |
 | `BUILD_SHARED_LIB` | `OFF` | 构建动态库（`.dll/.so`）而非静态库 |
-| `ORT_VERSION` | `1.20.1` | ONNX Runtime 版本 |
+| `ORT_VERSION` | `1.22.0` | ONNX Runtime 版本 |
 
 ---
 
